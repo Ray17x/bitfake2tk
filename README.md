@@ -12,6 +12,7 @@ This project was inspired by my original project: bitfake2, the multipurpose CLI
 # Contributor(s)
 Another small project, hoping it gains popularity. Feel free to open a pull request/issue, suggestions go there too. You may be permitted to be a maintainer after many accepted PRs.
 Please do not unneccesarily edit the testing CLI tool. It is for testing features, it does not declare/define any functions. 
+
 <a href="https://github.com/ray17x/bitfake2tk/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ray17x/bitfake2tk" />
 </a>

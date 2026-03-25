@@ -1,0 +1,28 @@
+
+-emd ~/Music/Fleshwater\ -\ We\'re\ Not\ Here\ to\ Be\ Loved/06\ -\ Kiss\ the\ Ladder.flac
+Title: Kiss the Ladder
+Artist: Fleshwater
+Album: We're Not Here to Be Loved
+Year: 2022-11-04
+Genre: Alternative;Rock
+Track No: 6
+Disc No: 1
+Total Tracks: 0
+Total Discs: 0
+Duration: 77 seconds
+Bitrate: 1053 kbps
+Channels: 2
+
+-emd ./06\ -\ Kiss\ the\ Ladder.mp3
+Title: Kiss the Ladder
+Artist: Fleshwater
+Album: We're Not Here to Be Loved
+Year: 2022
+Genre: Alternative / Rock
+Track No: 6
+Disc No: 0
+Total Tracks: 0
+Total Discs: 0
+Duration: 77 seconds
+Bitrate: 203 kbps
+Channels: 2

@@ -4,6 +4,7 @@ The Bitfake2tk single header file solution to general audio and/or audio metadat
 
 ## Features:
 * Extraction of metadata in .mp3 files (IDv2/1)
+* Extraction of metadata in .flac files (Vorbis comments)
 * Not much else.
 
 # Info

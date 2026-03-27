@@ -3,9 +3,10 @@
 The Bitfake2tk single header file solution to general audio and/or audio metadata extraction, manipulation, and checking. Simple import it into your project by copying/downloading the file and pasting / putting it into your working directory. Minimizes the use of external libraries so no linker issues are caused.
 
 ## Features:
-* Extraction of metadata in .mp3 files (IDv2/1)
+* Extraction of metadata in .mp3 files
 * Extraction of metadata in .flac files (Vorbis comments)
-* Not much else.
+* Extraction of metadata in .ogg/.opus files.
+* Editing metadata of .mp3s (ID3v1/v2)
 
 # Info
 This project was inspired by my original project: bitfake2, the multipurpose CLI tool used for audio stuff. However, @ucognic suggested I make some sort of library/header solution to my project so other people can freely use the exceptional qualities of my code; great idea, and so here it is.

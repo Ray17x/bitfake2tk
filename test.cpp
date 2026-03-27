@@ -30,7 +30,7 @@ static BitFake::Codec::AudioCodecType detectCodec(const fs::path& filepath) {
     if (BitFake::CheckMagic(filepath, BitFake::Codec::AudioCodecType::AAC)) return BitFake::Codec::AudioCodecType::AAC;
     if (BitFake::CheckMagic(filepath, BitFake::Codec::AudioCodecType::MP3)) return BitFake::Codec::AudioCodecType::MP3;
 
-    return BitFake::Codec::AudioCodecType::MP3;
+    return BitFake::Codec::AudioCodecType::INVALID;
 }
 
 static const char* codecToString(BitFake::Codec::AudioCodecType codec) {
@@ -45,8 +45,8 @@ static const char* codecToString(BitFake::Codec::AudioCodecType codec) {
         case AudioCodecType::ALAC: return "ALAC";
         case AudioCodecType::AIFF: return "AIFF";
         case AudioCodecType::WMA: return "WMA";
-        case AudioCodecType::PCM: return "PCM";
-        default: return "Unknown";
+        case AudioCodecType::INVALID: return "INVALID";
+        default: return "INVALID";
     }
 }
 
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
             }
             fs::path filepath = argv[++i];
             auto codec = detectCodec(filepath);
-            auto md = BitFake::GetMD::GetBasicMD(filepath, codec);
+            auto md = BitFake::Read::GetBasicMD(filepath, codec);
             std::cout << "Title: " << md.Title << std::endl;
             std::cout << "Artist: " << md.Artist << std::endl;
             std::cout << "Album: " << md.Album << std::endl;
@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
             }
             fs::path filepath = argv[++i];
             auto codec = detectCodec(filepath);
-            auto md = BitFake::GetMD::GetExtendedMD(filepath, codec);
+            auto md = BitFake::Read::GetExtendedMD(filepath, codec);
             std::cout << "Title: " << md.Title << std::endl;
             std::cout << "Artist: " << md.Artist << std::endl;
             std::cout << "Album: " << md.Album << std::endl;
@@ -108,6 +108,42 @@ int main(int argc, char** argv) {
             std::cout << "Detected codec: " << codecToString(codec) << std::endl;
 
             // im tired
+        }
+
+        if (std::strcmp(argv[i], "-t") == 0 || std::strcmp(argv[i], "--tag") == 0) {
+            if (i + 3 >= argc) {
+                std::cerr << "Error: Missing file path after " << argv[i] << std::endl;
+                std::cerr << "Usage: " << argv[0] << " <audiofile> --tag <field> <value>" << std::endl;
+                return 1;
+            }
+            fs::path filepath = argv[++i];
+            std::string field = argv[++i];
+            std::string value = argv[++i];
+            std::cout << "Testing in-memory tag set: '" << field << "' -> '" << value << "' in " << filepath << std::endl;
+
+            auto session = BitFake::Write::OPENSONG(filepath);
+            if (!session) {
+                std::cerr << "OPENSONG failed: " << session.Error << std::endl;
+                return 1;
+            }
+
+            if (!BitFake::Write::SETFIELD(session, field, value)) {
+                std::cerr << "SETFIELD failed: " << session.Error << std::endl;
+                return 1;
+            }
+
+            const std::string readBack = BitFake::Write::GETFIELD(session, field);
+            if (readBack != value) {
+                std::cerr << "Tag test failed: expected '" << value << "' but got '" << readBack << "'" << std::endl;
+                return 1;
+            }
+
+            if (!BitFake::Write::SAVESONG(session)) {
+                std::cerr << "SAVESONG failed: " << session.Error << std::endl;
+                return 1;
+            }
+
+            std::cout << "Tag test passed and was written to disk. Field now equals: " << readBack << std::endl;
         }
     }
 

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <unordered_map>
 namespace fs = std::filesystem;
 
 namespace BitFake
@@ -47,6 +48,12 @@ namespace BitFake
             }
         }
         return found ? value : 0;
+    }
+
+    static std::string normalizeMetadataKey(std::string key) {
+        std::transform(key.begin(), key.end(), key.begin(),
+                       [](unsigned char c) { return char(std::toupper(c)); });
+        return key;
     }
 
     static std::string decodeID3TextFrame(const char* data, uint32_t frameSize) {
@@ -329,7 +336,7 @@ namespace BitFake
             ALAC,
             AIFF,
             WMA,
-            PCM
+            INVALID
         };
 
         struct AudioCodecMagicStrings
@@ -343,7 +350,7 @@ namespace BitFake
             static constexpr std::string_view ALAC = "616C6163"; // "alac"
             static constexpr std::string_view AIFF = "464F524D"; // "FORM"
             static constexpr std::string_view WMA = "3026B2758E66CF11"; // ASF header
-            static constexpr std::string_view PCM = "0001"; // PCM doesn't have a fixed magic number, this is just a placeholder
+            static constexpr std::string_view INVALID = "0001"; // INVALID. This is just a placeholder and should not match any real audio file.
         };
     
     };
@@ -407,12 +414,22 @@ namespace BitFake
                 return hexMagic.find(Codec::AudioCodecMagicStrings::AIFF) != std::string::npos;
             case Codec::AudioCodecType::WMA:
                 return hexMagic.find(Codec::AudioCodecMagicStrings::WMA) != std::string::npos;
-            case Codec::AudioCodecType::PCM:
-                return hexMagic.find(Codec::AudioCodecMagicStrings::PCM) != std::string::npos;
+            case Codec::AudioCodecType::INVALID:
+                return hexMagic.find(Codec::AudioCodecMagicStrings::INVALID) != std::string::npos;
             default:
                 return false;
         }
     }
+    static Codec::AudioCodecType GetCodec(const fs::path& filepath)
+    {
+        for (int i = 0; i <= static_cast<int>(Codec::AudioCodecType::INVALID); ++i)
+        {
+            Codec::AudioCodecType codec = static_cast<Codec::AudioCodecType>(i);
+            if (CheckMagic(filepath, codec)) return codec;
+        }
+        return Codec::AudioCodecType::INVALID; // default fallback
+    }
+
 
     class Type
     {
@@ -441,7 +458,7 @@ namespace BitFake
         };
     };
 
-    class GetMD
+    class Read
     {
         public:
         static Type::BasicMD GetBasicMD(const fs::path& filepath, const Codec::AudioCodecType& codec)
@@ -968,6 +985,277 @@ namespace BitFake
 
             return md;
         }
+    };
+
+    class Write
+    {
+        public:
+        struct OpenSongSession
+        {
+            bool Ready = false;
+            bool InMemory = false;
+            bool Dirty = false;
+            fs::path Filepath{};
+            Codec::AudioCodecType AudioCodec = Codec::AudioCodecType::INVALID;
+            std::string Error{};
+            std::vector<uint8_t> AudioData{};
+            std::unordered_map<std::string, std::string> Metadata{};
+
+            explicit operator bool() const { return Ready; }
+        };
+
+        static void writeBE32(uint32_t value, uint8_t out[4]) {
+            out[0] = static_cast<uint8_t>((value >> 24) & 0xFF);
+            out[1] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            out[2] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            out[3] = static_cast<uint8_t>(value & 0xFF);
+        }
+
+        static void writeSynchsafe32(uint32_t value, uint8_t out[4]) {
+            out[0] = static_cast<uint8_t>((value >> 21) & 0x7F);
+            out[1] = static_cast<uint8_t>((value >> 14) & 0x7F);
+            out[2] = static_cast<uint8_t>((value >> 7) & 0x7F);
+            out[3] = static_cast<uint8_t>(value & 0x7F);
+        }
+
+        static void writeID3v1Field(char* dst, std::size_t len, const std::string& src) {
+            std::fill(dst, dst + len, '\0');
+            const std::size_t n = std::min(len, src.size());
+            std::copy(src.begin(), src.begin() + n, dst);
+        }
+
+        static void appendID3v23TextFrame(std::vector<uint8_t>& frames, const char frameId[4], const std::string& value) {
+            if (value.empty()) return;
+
+            const uint32_t payloadSize = static_cast<uint32_t>(1 + value.size());
+            const std::size_t oldSize = frames.size();
+            frames.resize(oldSize + 10 + payloadSize);
+
+            frames[oldSize + 0] = static_cast<uint8_t>(frameId[0]);
+            frames[oldSize + 1] = static_cast<uint8_t>(frameId[1]);
+            frames[oldSize + 2] = static_cast<uint8_t>(frameId[2]);
+            frames[oldSize + 3] = static_cast<uint8_t>(frameId[3]);
+
+            uint8_t be[4] = {0, 0, 0, 0};
+            writeBE32(payloadSize, be);
+            frames[oldSize + 4] = be[0];
+            frames[oldSize + 5] = be[1];
+            frames[oldSize + 6] = be[2];
+            frames[oldSize + 7] = be[3];
+
+            frames[oldSize + 8] = 0;
+            frames[oldSize + 9] = 0;
+
+            frames[oldSize + 10] = 0;
+            std::copy(value.begin(), value.end(), frames.begin() + static_cast<std::ptrdiff_t>(oldSize + 11));
+        }
+
+        static std::vector<uint8_t> buildID3v23Tag(const OpenSongSession& session) {
+            std::vector<uint8_t> frames;
+            appendID3v23TextFrame(frames, "TIT2", GETFIELD(session, "TITLE"));
+            appendID3v23TextFrame(frames, "TPE1", GETFIELD(session, "ARTIST"));
+            appendID3v23TextFrame(frames, "TALB", GETFIELD(session, "ALBUM"));
+            appendID3v23TextFrame(frames, "TDRC", GETFIELD(session, "DATE"));
+            appendID3v23TextFrame(frames, "TCON", GETFIELD(session, "GENRE"));
+            appendID3v23TextFrame(frames, "TRCK", GETFIELD(session, "TRACKNUMBER"));
+            appendID3v23TextFrame(frames, "TPOS", GETFIELD(session, "DISCNUMBER"));
+
+            std::vector<uint8_t> tag;
+            tag.reserve(10 + frames.size());
+            tag.push_back(static_cast<uint8_t>('I'));
+            tag.push_back(static_cast<uint8_t>('D'));
+            tag.push_back(static_cast<uint8_t>('3'));
+            tag.push_back(3);
+            tag.push_back(0);
+            tag.push_back(0);
+
+            uint8_t synchsafe[4] = {0, 0, 0, 0};
+            writeSynchsafe32(static_cast<uint32_t>(frames.size()), synchsafe);
+            tag.push_back(synchsafe[0]);
+            tag.push_back(synchsafe[1]);
+            tag.push_back(synchsafe[2]);
+            tag.push_back(synchsafe[3]);
+
+            tag.insert(tag.end(), frames.begin(), frames.end());
+            return tag;
+        }
+
+        /*
+        Writing to a song should be like a 3 step process
+
+        1. Open file
+        2. edit
+        3. write and close file
+        */
+        // store metadata in an unordered_map, each key-value pair is a metadata field
+        // std::unordered_map<std::string, std::string> metadata;
+
+    static OpenSongSession OPENSONG(const fs::path& filepath) {
+    OpenSongSession session{};
+    session.Filepath = filepath;
+
+    if (!fs::exists(filepath) || !fs::is_regular_file(filepath) || fs::file_size(filepath) == 0) {
+        session.Error = "File does not exist or is not a valid audio file";
+        fprintf(stderr, "%s: %s\n", session.Error.c_str(), filepath.string().c_str());
+        return session;
+    }
+
+    session.AudioCodec = GetCodec(filepath);
+    if (session.AudioCodec == Codec::AudioCodecType::INVALID) {
+        session.Error = "File is not a recognized audio format based off magic nos";
+        fprintf(stderr, "%s: %s\n", session.Error.c_str(), filepath.string().c_str());
+        return session;
+    }
+
+    std::ifstream f(filepath, std::ios::binary);
+    if (!f) {
+        session.Error = "Failed to open file for reading";
+        fprintf(stderr, "%s: %s\n", session.Error.c_str(), filepath.string().c_str());
+        return session;
+    }
+
+    session.AudioData.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    if (session.AudioData.empty()) {
+        session.Error = "Failed to load audio data into memory";
+        fprintf(stderr, "%s: %s\n", session.Error.c_str(), filepath.string().c_str());
+        return session;
+    }
+    session.InMemory = true;
+
+    const Type::ExtendedMD md = Read::GetExtendedMD(filepath, session.AudioCodec);
+    session.Metadata["TITLE"] = md.Title;
+    session.Metadata["ARTIST"] = md.Artist;
+    session.Metadata["ALBUM"] = md.Album;
+    session.Metadata["DATE"] = md.Date;
+    session.Metadata["GENRE"] = md.Genre;
+    session.Metadata["TRACKNUMBER"] = std::to_string(md.TrackNo);
+    session.Metadata["DISCNUMBER"] = std::to_string(md.DiscNo);
+    session.Metadata["TOTALTRACKS"] = std::to_string(md.TotalTracks);
+    session.Metadata["TOTALDISCS"] = std::to_string(md.TotalDiscs);
+
+    session.Ready = true;
+    return session;
+    }
+
+    static bool SETFIELD(OpenSongSession& session, const std::string& key, const std::string& value) {
+    if (!session.Ready || !session.InMemory) {
+        session.Error = "Session is not open or audio data is not in memory";
+        return false;
+    }
+    if (key.empty()) {
+        session.Error = "Metadata field key cannot be empty";
+        return false;
+    }
+
+    const std::string normalizedKey = normalizeMetadataKey(key);
+    session.Metadata[normalizedKey] = value;
+    session.Dirty = true;
+    session.Error.clear();
+    return true;
+    }
+
+    static std::string GETFIELD(const OpenSongSession& session, const std::string& key) {
+    if (!session.Ready || key.empty()) return "";
+    const std::string normalizedKey = normalizeMetadataKey(key);
+    auto it = session.Metadata.find(normalizedKey);
+    if (it == session.Metadata.end()) return "";
+    return it->second;
+    }
+
+    static bool SAVESONG(OpenSongSession& session) {
+    if (!session.Ready || !session.InMemory) {
+        session.Error = "Session is not open or audio data is not in memory";
+        return false;
+    }
+
+    if (!session.Dirty) {
+        session.Error.clear();
+        return true;
+    }
+
+    if (session.AudioCodec != Codec::AudioCodecType::MP3) {
+        session.Error = "SAVESONG currently supports MP3 only";
+        return false;
+    }
+
+    if (session.AudioData.size() < 3) {
+        session.Error = "Audio buffer is too small to write";
+        return false;
+    }
+
+    std::vector<uint8_t> audioCore = session.AudioData;
+
+    if (audioCore.size() >= 10 &&
+        audioCore[0] == static_cast<uint8_t>('I') &&
+        audioCore[1] == static_cast<uint8_t>('D') &&
+        audioCore[2] == static_cast<uint8_t>('3')) {
+        unsigned char sz[4] = {
+            static_cast<unsigned char>(audioCore[6]),
+            static_cast<unsigned char>(audioCore[7]),
+            static_cast<unsigned char>(audioCore[8]),
+            static_cast<unsigned char>(audioCore[9])
+        };
+        const uint32_t tagSize = readSynchsafe(sz);
+        const uint8_t flags = audioCore[5];
+        std::size_t existingTagBytes = static_cast<std::size_t>(10 + tagSize + ((flags & 0x10) ? 10 : 0));
+        if (existingTagBytes > audioCore.size()) existingTagBytes = audioCore.size();
+        audioCore.erase(audioCore.begin(), audioCore.begin() + static_cast<std::ptrdiff_t>(existingTagBytes));
+    }
+
+    if (audioCore.size() >= 128) {
+        const std::size_t start = audioCore.size() - 128;
+        const bool hadID3v1 = (audioCore[start] == static_cast<uint8_t>('T') &&
+                               audioCore[start + 1] == static_cast<uint8_t>('A') &&
+                               audioCore[start + 2] == static_cast<uint8_t>('G'));
+        if (hadID3v1) audioCore.resize(audioCore.size() - 128);
+    }
+
+    const std::vector<uint8_t> id3v23Tag = buildID3v23Tag(session);
+
+    std::array<char, 128> id3v1{};
+    std::fill(id3v1.begin(), id3v1.end(), '\0');
+    id3v1[0] = 'T';
+    id3v1[1] = 'A';
+    id3v1[2] = 'G';
+    writeID3v1Field(id3v1.data() + 3, 30, GETFIELD(session, "TITLE"));
+    writeID3v1Field(id3v1.data() + 33, 30, GETFIELD(session, "ARTIST"));
+    writeID3v1Field(id3v1.data() + 63, 30, GETFIELD(session, "ALBUM"));
+    writeID3v1Field(id3v1.data() + 93, 4, GETFIELD(session, "DATE"));
+    writeID3v1Field(id3v1.data() + 97, 28, "");
+    id3v1[125] = '\0';
+
+    int track = parseLeadingInt(GETFIELD(session, "TRACKNUMBER"));
+    if (track < 0) track = 0;
+    if (track > 255) track = 255;
+    id3v1[126] = static_cast<char>(track);
+    id3v1[127] = static_cast<char>(255);
+
+    std::vector<uint8_t> out;
+    out.reserve(id3v23Tag.size() + audioCore.size() + id3v1.size());
+    out.insert(out.end(), id3v23Tag.begin(), id3v23Tag.end());
+    out.insert(out.end(), audioCore.begin(), audioCore.end());
+    out.insert(out.end(), reinterpret_cast<const uint8_t*>(id3v1.data()), reinterpret_cast<const uint8_t*>(id3v1.data()) + id3v1.size());
+
+    std::ofstream wf(session.Filepath, std::ios::binary | std::ios::trunc);
+    if (!wf) {
+        session.Error = "Failed to open file for writing";
+        return false;
+    }
+
+    wf.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
+    if (!wf) {
+        session.Error = "Failed while writing updated metadata to disk";
+        return false;
+    }
+
+    session.AudioData = std::move(out);
+    session.Dirty = false;
+    session.Error.clear();
+    return true;
+    }
+
+
+    
     };
 }
 

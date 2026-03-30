@@ -2,6 +2,11 @@
 
 The Bitfake2tk single header file solution to general audio and/or audio metadata extraction, manipulation, and checking. Simple import it into your project by copying/downloading the file and pasting / putting it into your working directory. Minimizes the use of external libraries so no linker issues are caused.
 
+# ARCHIEVED PROJECT
+
+Taglib does it better yo
+
+
 ## Features:
 * Extraction of metadata in .mp3 files
 * Extraction of metadata in .flac files (Vorbis comments)
